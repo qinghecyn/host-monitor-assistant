@@ -26,14 +26,15 @@
 ## 目录
 
 - [它是什么](#它是什么)
-- [无法替代的优势](#无法替代的优势)
-- [与竞品对比](#与竞品对比)
+- [设计取向](#设计取向)
+- [和常见方案比](#和常见方案比)
 - [功能一览](#功能一览)
 - [快速开始](#快速开始)
 - [从源码编译](#从源码编译)
 - [配置与安全](#配置与安全)
 - [目录结构](#目录结构)
 - [常见问题](#常见问题)
+- [实测数据](#实测数据)
 - [开源协议](#开源协议)
 
 ## 它是什么
@@ -47,7 +48,7 @@
 - **三端同源**：Windows 桌面安装包（3.1 MiB）、独立后端浏览器版（单文件 7 MB）、
   安卓 App（Rust 编成 `.so` 经 JNI 在 App 进程内跑，独立分支仓库）。
 
-适合：软路由 / NAS /  homelab / 小机房 / 开发板（树莓派、RISC-V 板子）……
+适合：软路由 / NAS / homelab / 小机房 / 开发板（树莓派、RISC-V 板子）……
 凡是 BusyBox、OpenWrt、iStoreOS、Debian、Ubuntu、Alpine 这类「装不动重型 agent」的机器，它都吃得下。
 
 <p align="center">
@@ -55,68 +56,47 @@
   <img src="docs/shots/10-real-dashboard.png" width="560" alt="真实软路由 19 网卡">
 </p>
 
-## 无法替代的优势
+## 设计取向
 
-这些不是「我们也有」，而是竞品结构性做不到的：
+它不做「什么都监控」，只把下面几件事做扎实：
 
-### 1. 被监控机真·零足迹，连 /tmp 都不写
-Netdata 要装包跑服务，node_exporter 要开 9100 端口，Zabbix agent 要改配置注册。
-本项目远端只执行 `cat /proc/*`、`df`、`docker ps/stats` 等**只读命令**，脚本经 stdin 注入内存执行，
-**不写任何文件、不留任何进程、不开任何端口**。监控关掉，目标机上像从没来过。
-对闪存寿命敏感的软路由 / eMMC 开发板，这是唯一友好的方案。
+### 1. 被监控机近乎零足迹
+远端只执行 `cat /proc/*`、`df`、`docker ps/stats` 等**只读命令**，脚本经 stdin 注入内存执行，
+不写文件、不留常驻进程、不开端口。对闪存寿命敏感的软路由 / eMMC 开发板比较友好。
+（对比：Netdata 要装包跑服务，node_exporter 要开 9100 端口，Zabbix agent 要改配置注册。）
 
-### 2. 路由器级弱环境全覆盖
-采集脚本是纯 POSIX sh + awk，**BusyBox 直接跑**：OpenWrt / iStoreOS 不需要 bash、不需要 Python、
-不需要 coreutils。实测 iStoreOS 19 张网卡全部解析、Docker、4 路风扇、3 路温度一次拿齐。
-Netdata 官方不支持 OpenWrt；node_exporter 的 mipsle 交叉编译与体积在 16MB 闪存路由器上并不现实。
+### 2. 弱环境可用
+采集脚本是纯 POSIX sh + awk，BusyBox 直接跑：OpenWrt / iStoreOS 不需要 bash、Python、coreutils。
+实测 iStoreOS 一台上解析出 19 张网卡、Docker 容器、4 路风扇、3 路温度。
 
-### 3. 一个 7MB 单文件 = 完整监控系统
-后端 + SSH 客户端 + 历史数据库（SQLite 内嵌）+ Web 服务器 + 告警推送 + 拨测，全部在一个
-`xmm-server.exe` 里。对比：Netdata 全家桶数百 MB、Prometheus+Grafana+exporter 三件套、
-Zabbix server 要 MySQL/PostgreSQL。**拷一个文件到任何 Windows 机器双击就是监控中心。**
+### 3. 单文件就是完整监控系统
+后端 + SSH 客户端 + 历史库（内嵌 SQLite）+ Web 服务器 + 告警推送 + 拨测，全在一个
+`xmm-server.exe` 里。拷一个文件到任意 Windows 机器双击即可作为监控中心。
 
-### 4. 桌面级资源占用（实测）
-| 指标 | 数值 |
-|---|---|
-| 后端私有内存 | **8.6 MB** |
-| 后端工作集 | **25.4 MB** |
-| 桌面安装包 | **3.09 MiB** |
-| 进程数 | **1**（壳与后端同进程） |
-| 冷启动 | 秒级 |
-
-### 5. 手机 App 里没有第二个进程
-安卓端把同一套 Rust 后端编成 `libxmm_android.so`，JNI 在 App 进程内起 axum，
-WebView 只连 `127.0.0.1`。没有 Chaquopy/Python、没有子进程、明文流量不出手机。
-1.4.1 起带前台服务 + WakeLock 保活，切走应用 / 灭屏采集不断线（澎湃OS 等国产 ROM 实测）。
-
-### 6. 告警闭环开箱即用，不需要 Alertmanager
-温度 / 内存 / 根分区阈值告警 + 按主机/资源/挂载点的持续型规则（触发线/恢复线/持续秒数，带滞回），
+### 4. 告警闭环自带，不依赖 Alertmanager
+温度 / 内存 / 根分区阈值告警 + 按主机/资源/挂载点的持续型规则（触发线 / 恢复线 / 持续秒数，带滞回），
 边沿检测去重，恢复通知带持续时长，静默时段，心跳。
-推送通道：**Server酱（微信）/ Telegram / SMTP 邮件 / 自定义 WebHook**，填个 key 就通。
+推送通道：Server酱（微信）/ Telegram / SMTP 邮件 / 自定义 WebHook。
 另附 TCP / HTTP / Ping 服务拨测（连续失败防抖 + 恢复事件）。
 
-### 7. 中文优先，报错说人话
+### 5. 中文优先，报错说人话
 连接失败直接告诉你「密码错 / 端口没开 / 指纹不对 / 网络不可达」，而不是抛一行 TLS 栈。
 界面、文档、告警文案全中文。
 
-## 与竞品对比
+## 和常见方案比
 
-| | 本项目 | Netdata | Prometheus + node_exporter + Grafana | Zabbix | Glances |
-|---|---|---|---|---|---|
-| 被监控机安装 | **零（只要 SSH）** | 装 agent | 装 exporter | 装 agent | 装 Glances |
-| 被监控机开端口 | **无** | 19999 | 9100 | 10050 | 61208 |
-| OpenWrt/BusyBox 目标 | **✅ 原生** | ❌ | 勉强 | 勉强 | ❌ |
-| 监控端体积 | **3 MiB 安装包 / 7 MB 单文件** | 数百 MB | 三件套 | Server+DB | pip 全家 |
-| 监控端内存 | **~25 MB** | 数百 MB | 数百 MB~GB | 数百 MB | ~100 MB |
-| 历史存储 | 内嵌 SQLite（自动清理） | 自研 dbengine | Prometheus TSDB | MySQL/PgSQL | 无/导出 |
-| 告警推送 | **微信/TG/邮件/WebHook 内置** | Netdata Cloud | Alertmanager | 内置(配置繁) | 无 |
-| Windows 桌面端 | **✅ 原生托盘** | 浏览器 | 浏览器 | 浏览器 | 浏览器 |
-| 安卓 App | **✅ 同进程 Rust** | Cloud App | 第三方 | 官方(连 server) | 无 |
-| 上手时间 | **分钟级** | 分钟级 | 小时级 | 天级 | 分钟级 |
-| 适合规模 | 1~50 台 | 单机深度诊断 | 大规模/云原生 | 企业级 | 单机临时看 |
+只列对选型最关键的几行，完整维度请自行实测：
 
-诚实说明：如果你要的是上万节点的云原生可观测性、分布式追踪、自定义 PromQL 大盘，
-请选 Prometheus 生态；本项目专注「少量主机的实时状态 + 告警闭环」，并把这个场景做到最轻。
+| | 本项目 | Netdata | Prometheus + node_exporter + Grafana | Zabbix |
+|---|---|---|---|---|
+| 被监控机安装 | **零（只要 SSH）** | 装 agent | 装 exporter | 装 agent |
+| OpenWrt / BusyBox 目标 | **原生支持** | 不支持 | 勉强 | 勉强 |
+| 监控端体积 | **约 3 MiB 安装包 / 7 MB 单文件** | 数百 MB | 三件套 | Server + DB |
+| 告警推送 | **微信 / TG / 邮件 / WebHook 内置** | Netdata Cloud | Alertmanager | 内置（配置较繁） |
+| 适合规模 | 1~50 台 | 单机深度诊断 | 大规模 / 云原生 | 企业级 |
+
+说明：如果你要的是上万节点的云原生可观测性、分布式追踪、自定义 PromQL 大盘，请选 Prometheus 生态；
+本项目专注「少量主机的实时状态 + 告警闭环」，并把这个场景做到尽可能轻。
 
 ## 功能一览
 
@@ -142,9 +122,13 @@ WebView 只连 `127.0.0.1`。没有 Chaquopy/Python、没有子进程、明文�
 ### 方式 B：浏览器版 / 服务模式（任意 Windows 机器）
 ```bat
 xmm-server.exe --open-browser
-:: 默认 http://127.0.0.1:8787，账号 admin / admin123（首次登录后请立即在设置里修改）
+:: 默认 http://127.0.0.1:8787
+:: 首次启动请在设置里设置 Web 密码（默认监听 0.0.0.0 时更务必设置）
 ```
 数据与配置生成在 exe 同目录；`--config`、`--data-dir`、`--host`、`--port` 可自定义。
+
+> **安全提示**：请勿在公网直接暴露 8787 端口。若需局域网访问，务必修改默认账号密码，
+> 或把 `listen_host` 改为 `127.0.0.1` 只允许本机访问。
 
 ### 方式 C：没有目标机？先看演示
 ```bat
@@ -185,38 +169,33 @@ packaging\build_all.bat
 Linux/macOS 上可直接 `cargo run --manifest-path rs/xmm/Cargo.toml --bin xmm-server` 跑浏览器版
 （桌面壳打包链路目前只针对 Windows NSIS）。
 
-## 配置与安全
-
 - 首次运行自动生成 `config.toml`（模板见 [config.example.toml](config.example.toml)），界面改设置即时生效并原子落盘（保留 `.bak`）。
 - **密码优先级**：目标明文 password（仅兜底）→ 环境变量（`password_env` / `MON_PASSWORD`）→ Windows 凭据管理器；Web 密码支持 `MON_WEB_PASSWORD`。
 - **SSH 指纹**：首连记录（autoadd），此后严格校验；可切 strict 只信任已有 known_hosts。旧 asyncssh 记录的 RSA-only 指纹兼容。
 - 凭据不写日志、不回传前端（接口只回"有没有配"）；远端全部只读命令。
-- 浏览器版默认监听 `0.0.0.0:8787` 供局域网访问——**请务必修改默认密码**，或改 `listen_host = "127.0.0.1"`。
 
 ## 目录结构
 
 ```
-rs/xmm/                  Rust 后端（唯一后端实现，42 例测试）
-  src/parser.rs          行协议 → 结构化帧（逐段容错，速率本地差值）
-  src/ssh.rs             russh 长连接 / 重连退避 / 看门狗 / 指纹校验
-  src/state.rs           采集器生命周期 / 快照 / 告警边沿
-  src/api.rs             axum 路由 / WebSocket / 鉴权
-  src/store.rs           SQLite 历史（WAL / 批量写 / 降采样 / 自动清理）
-  src/alerts.rs          阈值 + 持续型资源规则（滞回）
-  src/notify.rs          Server酱 / Telegram / SMTP / WebHook
-  src/probes.rs          TCP / HTTP / Ping 拨测
-  src/bin/xmm-server.rs  独立服务 / 浏览器版入口
-collector/remote/collect.sh  远端采集脚本（编译期 include_str! 内嵌，勿删）
-web/                     原生 JS 前端（无构建步骤，Chart.js 本地 vendor）
-shell/tauri/             Windows 桌面壳（与后端同进程，托盘/免登录）
-packaging/build_all.bat  一键打包
-docs/                    协议定义 / 开发文档 / 截图
-scripts/                 API 验收脚本
+rs/xmm/                 Rust 后端（唯一后端实现，42 例测试）
+  src/parser.rs         行协议 → 结构化帧（逐段容错，速率本地差值）
+  src/ssh.rs            russh 长连接 / 重连退避 / 看门狗 / 指纹校验
+  src/state.rs          采集器生命周期 / 快照 / 告警边沿
+  src/api.rs            axum 路由 / WebSocket / 鉴权
+  src/store.rs          SQLite 历史（WAL / 批量写 / 降采样 / 自动清理）
+  src/alerts.rs         阈值 + 持续型资源规则（滞回）
+  src/notify.rs         Server酱 / Telegram / SMTP / WebHook
+  src/probes.rs         TCP / HTTP / Ping 拨测
+  src/bin/xmm-server.rs 独立服务 / 浏览器版入口
+collector/remote/collect.sh   远端采集脚本（编译期 include_str! 内嵌，勿删）
+web/                    原生 JS 前端（无构建步骤，Chart.js 本地 vendor）
+shell/tauri/            Windows 桌面壳（与后端同进程，托盘/免登录）
+packaging/build_all.bat 一键打包
+docs/                   协议定义 / 开发文档 / 截图
+scripts/                API 验收脚本
 ```
 
-深入阅读：[docs/协议与数据格式.md](docs/协议与数据格式.md) ·
-[docs/beta2.4-rust-后端重构.md](docs/beta2.4-rust-后端重构.md) ·
-[docs/开发文档.md](docs/开发文档.md)
+深入阅读：[docs/协议与数据格式.md](docs/协议与数据格式.md) · [docs/beta2.4-rust-后端重构.md](docs/beta2.4-rust-后端重构.md) · [docs/开发文档.md](docs/开发文档.md)
 
 ## 常见问题
 
@@ -235,6 +214,20 @@ scripts/                 API 验收脚本
 
 **Q：为什么不做 Linux 桌面壳？**
 浏览器版在 Linux 上体验一致；桌面壳当前只出 Windows NSIS 包，欢迎 PR。
+
+## 实测数据
+
+以下为一台 Windows 监控端运行时的自测值，仅供参考，实际随环境和版本变动：
+
+| 指标 | 数值 |
+|---|---|
+| 后端私有内存 | 8.6 MB |
+| 后端工作集 | 25.4 MB |
+| 桌面安装包 | 3.09 MiB |
+| 进程数 | 1（壳与后端同进程） |
+| 冷启动 | 秒级 |
+
+> 欢迎提交你自己的实测环境与数据。
 
 ## 开源协议
 
