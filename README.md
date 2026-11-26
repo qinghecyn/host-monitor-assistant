@@ -216,7 +216,7 @@ scripts/                 API 验收脚本
 
 深入阅读：[docs/协议与数据格式.md](docs/协议与数据格式.md) ·
 [docs/beta2.4-rust-后端重构.md](docs/beta2.4-rust-后端重构.md) ·
-[使用手册.md](使用手册.md)
+[docs/开发文档.md](docs/开发文档.md)
 
 ## 常见问题
 
