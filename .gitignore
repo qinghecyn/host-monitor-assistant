@@ -1,0 +1,32 @@
+# ---- Rust ----
+target/
+**/target/
+
+# ---- 运行数据（绝不入库：含密码 / 指纹 / 历史）----
+config.toml
+config.toml.bak
+known_hosts
+history.db
+history.db-shm
+history.db-wal
+server.log
+server.log.*
+secrets.json
+build/
+dist/
+
+# ---- Node（仅打包工具用）----
+node_modules/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
+
+# ---- 临时 ----
+*.tmp
+ss.txt
+__pycache__/
+.pytest_cache/

@@ -1,0 +1,42 @@
+[package]
+name = "xmm"
+version = "1.4.0"
+edition = "2021"
+description = "主机监控小助手 —— Rust 后端（替代 Python FastAPI 后端）"
+license = "MIT"
+
+[lib]
+name = "xmm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xmm-server"
+path = "src/bin/xmm-server.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+toml = "0.8"
+# 关掉 russh 默认的 aws-lc-rs（BoringSSL 的 C 源码在 Windows 上编译极慢），改用 ring。
+russh = { version = "0.54", default-features = false, features = ["flate2", "ring", "rsa"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+# HTTP / SMTP 都走系统原生 TLS（Windows = SChannel），避免再编一套 rustls/aws-lc。
+reqwest = { version = "0.12", default-features = false, features = ["native-tls", "json"] }
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-native-tls", "builder", "hostname"] }
+rand = "0.8"
+base64 = "0.22"
+futures = "0.3"
+chrono = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -1,0 +1,48 @@
+# 主机监控小助手 beta1.4（v1.4.0）配置模板
+# 复制本文件为 config.toml 后修改（首次运行会自动生成 config.toml）。
+# 注意：服务器（被监控主机）现在推荐在界面"服务器"里加，程序会自动写回本文件。
+# 密码优先级：环境变量 > 系统密钥环 > 配置文件明文（不推荐）。
+
+[server]
+# 监听地址：127.0.0.1 = 只允许本机；0.0.0.0 = 局域网手机/别的电脑也能连
+listen_host = "0.0.0.0"
+listen_port = 8787
+
+[auth]
+# 浏览器登录用（桌面版自动登录，用不到这组）
+username = "admin"
+# 优先读环境变量 MON_WEB_PASSWORD，其次此值。首次部署请务必修改！
+password = "admin123"
+
+[collect]
+# 采集间隔（秒）；折线图窗口时长（分钟）
+interval_s = 1
+history_minutes = 5
+
+[alerts]
+# 告警阈值：温度(℃)、内存可用比例(%)、根分区可用空间(GB)，对所有服务器通用
+temp_c = 70.0
+mem_available_percent = 0.0
+root_free_gb = 1.0
+resource_rules = [{host="*", metric="all", mount="*", below=3, recover=5, seconds=30}]
+
+# ---------------------------------------------------------------
+# 被监控主机：一台一段，[targets.外号]，外号只能用字母/数字/下划线/中划线。
+# 界面里添加会自动生成下面这种段落，手写也可以（改完重启程序生效）。
+#
+#   host              必填，IP 或域名
+#   port              默认 22
+#   username          默认 root
+#   password          明文密码（桌面版就存在这个文件里，文件在你自己的用户目录下）
+#   password_env      改成"从环境变量读密码"，更安全，例：password_env = "MON_PASSWORD"
+#   private_key       密钥登录，填了就不用 password，例："C:/Users/you/.ssh/id_ed25519"
+#   label             界面里显示的别名，例："客厅路由器"
+#   note              备注，随便写
+#   host_key_policy   autoadd（默认，首次连接记录指纹后校验）/ strict（只信任 known_hosts）
+#
+# [targets.primary]
+# host = "192.168.1.1"
+# port = 22
+# username = "root"
+# password_env = "MON_PASSWORD"
+# label = "主路由"

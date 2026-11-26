@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>主机监控小助手</title>
+<link rel="icon" href="data:,">
+<script src="js/appearance.js"></script>
+<link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+
+<!-- 登录（桌面版会自动跳过） -->
+<div id="login-view" class="view">
+  <form class="card login-card" id="login-form" autocomplete="off">
+    <h1>主机监控小助手</h1>
+    <button type="button" class="theme-switch login-theme" data-theme-toggle></button>
+    <p class="muted center">实时查看 Linux 主机运行状态 <span class="ver">beta1.4</span></p>
+    <label>服务端地址
+      <input id="server-url" placeholder="留空 = 当前站点" spellcheck="false">
+    </label>
+    <label>账号
+      <input id="login-username" autocomplete="username" placeholder="账号">
+    </label>
+    <label>密码
+      <input id="login-password" type="password" autocomplete="current-password" placeholder="密码">
+    </label>
+    <label class="chk">
+      <input type="checkbox" id="remember">
+      <span>记住密码（仅保存在本机浏览器）</span>
+    </label>
+    <button type="submit" class="primary" id="btn-login">登 录</button>
+    <p class="err center" id="login-err"></p>
+  </form>
+</div>
+
+<!-- 主界面 -->
+<div id="main-view" class="view hidden">
+  <header>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>主机监控</div>
+    <div class="target-picker">
+      <span id="cur-dot" class="dot"></span>
+      <select aria-label="当前主机" id="target-select" class="sel"></select>
+    </div>
+    <div id="status-pill" class="pill connecting">连接中…</div>
+    <div id="os-badge" class="os-badge"></div>
+    <div class="spacer"></div>
+    <div id="uptime" class="muted"></div>
+    <button id="btn-history" class="ghost">历史</button>
+    <button id="btn-probes" class="ghost">拨测</button>
+    <button id="btn-servers" class="ghost">服务器</button>
+    <button id="btn-config" class="ghost">设置</button>
+    <button id="btn-quit" class="ghost danger">退出</button>
+  </header>
+
+  <div id="alert-banner" class="banner hidden"></div>
+  <div id="offline-banner" class="banner warn hidden">连接已断开，正在显示最后一次数据（自动重连中…）</div>
+
+  <section class="fleet" aria-labelledby="fleet-title">
+    <div class="fleet-head"><h1 id="fleet-title">多主机总览</h1><span id="fleet-count" class="sub"></span></div>
+    <div id="fleet-list" class="fleet-list"></div>
+  </section>
+  <div class="dashboard-heading">
+    <h2 id="detail-title">主机详情</h2>
+    <div class="view-controls">
+      <div class="segmented" role="group" aria-label="占用率视图">
+        <button data-mode="ring">环形图</button><button data-mode="classic">经典视图</button>
+      </div>
+      <button class="theme-switch" data-theme-toggle></button>
+    </div>
+  </div>
+  <main class="grid">
+    <section class="card wide empty-state hidden" id="empty-state">
+      <h2>还没有添加服务器</h2>
+      <p class="muted">点下面的按钮，填上 IP、账号、密码就能开始监控。配置会自动存进 config.toml。</p>
+      <button class="primary" id="btn-empty-add">＋ 添加第一台服务器</button>
+    </section>
+
+    <section class="card" id="card-cpu">
+      <div class="card-head"><h2>CPU</h2><div class="sub" id="cpu-cores"></div></div>
+      <div class="meter-summary"><div class="dial" aria-hidden="true"></div><div class="big"><span id="v-cpu">—</span><small>%</small></div><div class="meter-legend" aria-hidden="true"><span>已用 <b></b></span><span>空闲 <b></b></span></div></div>
+      <div class="cores" id="cpu-bars"></div>
+      <div class="sub" id="v-load">负载 —</div>
+      <div class="chart-box"><canvas id="chart-cpu"></canvas></div>
+    </section>
+
+    <section class="card" id="card-mem">
+      <div class="card-head"><h2>内存</h2><div class="sub" id="mem-detail"></div></div>
+      <div class="meter-summary"><div class="dial" aria-hidden="true"></div><div class="big"><span id="v-mem">—</span><small>% 已用</small></div><div class="meter-legend" aria-hidden="true"><span>已用 <b></b></span><span>空闲 <b></b></span></div></div>
+      <div class="bar"><div id="mem-bar" class="bar-fill"></div></div>
+      <div class="chart-box"><canvas id="chart-mem"></canvas></div>
+    </section>
+
+    <section class="card" id="card-gpu">
+      <div class="card-head"><h2>GPU</h2><div class="sub" id="gpu-count"></div></div>
+      <div class="meter-summary"><div class="dial" aria-hidden="true"></div><div class="big"><span id="v-gpu">—</span><small>%</small></div><div class="meter-legend" aria-hidden="true"><span>已用 <b></b></span><span>空闲 <b></b></span></div></div>
+      <button id="gpu-details" class="gpu-details" aria-controls="gpu-list" aria-expanded="false">显卡明细</button>
+      <ul class="templist" id="gpu-list"></ul>
+      <div class="sub" id="gpu-note"></div>
+      <div class="chart-box"><canvas id="chart-gpu"></canvas></div>
+    </section>
+
+    <section class="card" id="card-temp">
+      <div class="card-head"><h2>温度</h2><div class="sub" id="temp-count"></div></div>
+      <div class="big"><span id="v-temp">—</span><small>℃</small></div>
+      <ul class="templist" id="temp-list"></ul>
+      <div class="chart-box"><canvas id="chart-temp"></canvas></div>
+    </section>
+
+    <section class="card" id="card-fan">
+      <div class="card-head"><h2>风扇</h2><div class="sub" id="fan-count"></div></div>
+      <div class="big"><span id="v-fan">—</span><small>RPM</small></div>
+      <ul class="templist" id="fan-list"></ul>
+      <div class="sub" id="fan-note"></div>
+    </section>
+
+    <section class="card" id="card-net">
+      <div class="card-head">
+        <h2>网络</h2>
+        <div class="sub" id="net-ifaces"></div>
+        <div class="segmented compact net-unit" role="group" aria-label="网络速率格式">
+          <button type="button" data-net-unit="bits" aria-pressed="true" title="kbps → Mbps → Gbps 自动切换">Mbps/Gbps 自适应</button>
+          <button type="button" data-net-unit="bytes" aria-pressed="false" title="KiB/s → MiB/s → GiB/s 自动切换">MiB/s/GiB/s 自适应</button>
+        </div>
+      </div>
+      <div class="big net">
+        <span>↓ <span id="v-rx">—</span></span>
+        <span>↑ <span id="v-tx">—</span></span>
+      </div>
+      <div class="chart-box"><canvas id="chart-net"></canvas></div>
+      <ul class="netlist" id="net-list"></ul>
+    </section>
+
+    <section class="card wide" id="card-disk">
+      <div class="card-head">
+        <h2>磁盘</h2>
+        <div class="sub" id="disk-summary">可用空间 · 速率 MiB/s</div>
+        <div class="disk-controls">
+          <div class="segmented compact" role="group" aria-label="磁盘名称显示方式">
+            <button type="button" data-disk-name="dev" aria-pressed="true" title="显示 /dev/sdxN 块设备名">设备名</button>
+            <button type="button" data-disk-name="mount" aria-pressed="false" title="显示 /mnt/xxx 等挂载点">挂载点</button>
+          </div>
+          <div class="segmented compact" role="group" aria-label="磁盘速率单位">
+            <button type="button" data-disk-unit="mib" aria-pressed="true">MiB/s</button>
+            <button type="button" data-disk-unit="gib" aria-pressed="false">GiB/s</button>
+          </div>
+        </div>
+      </div>
+      <ul class="disklist" id="disk-list"></ul>
+    </section>
+
+    <section class="card wide" id="card-docker">
+      <div class="card-head"><h2>Docker 负载</h2><div class="sub" id="docker-summary"></div></div>
+      <div class="docker-head" id="docker-table-head">
+        <span>容器</span><span>状态</span><span>CPU</span><span>内存</span><span>网络 IO</span><span>块 IO</span>
+      </div>
+      <div class="dockerlist" id="docker-list"></div>
+    </section>
+  </main>
+</div>
+
+<!-- 服务器管理抽屉 -->
+<div id="servers-mask" class="mask hidden"></div>
+<div id="servers-panel" class="panel wide hidden">
+  <div class="panel-head">
+    <h2>服务器管理</h2>
+    <button class="ghost sm" id="btn-sv-close">关闭</button>
+  </div>
+  <p class="muted">这里管理的就是 config.toml 里的 <code>[targets.*]</code>，增删改都会立刻生效并写回文件，不用重启。</p>
+
+  <div id="sv-list" class="sv-list"></div>
+  <button class="primary block" id="btn-sv-add">＋ 添加服务器</button>
+
+  <form id="sv-form" class="sv-form hidden" autocomplete="off">
+    <h3 id="sv-form-title">添加服务器</h3>
+    <div class="cfg-row2">
+      <label>名称（英文/数字，配置文件里的键）<input id="sv-name" placeholder="router" spellcheck="false"></label>
+      <label>显示名（随便起，可空）<input id="sv-label" placeholder="客厅路由器"></label>
+    </div>
+    <div class="cfg-row3">
+      <label>地址 / IP<input id="sv-host" placeholder="192.168.1.1" spellcheck="false"></label>
+      <label>SSH 端口<input id="sv-port" type="number" min="1" max="65535" value="22"></label>
+    </div>
+    <div class="cfg-row3">
+      <label>用户名<input id="sv-user" placeholder="root" spellcheck="false"></label>
+      <label>密码<input id="sv-pass" type="password" placeholder="留空 = 不修改"></label>
+    </div>
+    <label>私钥路径（可选，填了可以不用密码）<input id="sv-key" placeholder="C:/Users/you/.ssh/id_ed25519" spellcheck="false"></label>
+    <label>备注<input id="sv-note" placeholder="可选，比如：机房第二台"></label>
+    <p class="hint" id="sv-hint"></p>
+    <p class="err" id="sv-err"></p>
+    <p class="test-result hidden" id="sv-test"></p>
+    <div class="panel-actions">
+      <button type="button" class="ghost" id="btn-sv-test">测试连接</button>
+      <button type="button" class="ghost" id="btn-sv-cancel">取消</button>
+      <button type="submit" class="primary" id="btn-sv-save">保存</button>
+    </div>
+  </form>
+</div>
+
+<!-- 历史趋势抽屉（beta2.2） -->
+<div id="history-mask" class="mask hidden"></div>
+<div id="history-panel" class="panel wide hidden">
+  <div class="panel-head">
+    <h2>历史趋势</h2>
+    <button class="ghost sm" id="btn-his-close">关闭</button>
+  </div>
+  <div class="cfg-row3">
+    <label>主机<select id="his-host" class="sel"></select></label>
+    <label>指标<select id="his-metric" class="sel"></select></label>
+  </div>
+  <div class="his-ranges" id="his-ranges">
+    <button class="ghost sm" data-min="60">1 时</button>
+    <button class="ghost sm" data-min="360">6 时</button>
+    <button class="ghost sm" data-min="1440">1 天</button>
+    <button class="ghost sm" data-min="4320">3 天</button>
+    <button class="ghost sm" data-min="10080">7 天</button>
+    <button class="ghost sm" data-min="43200">30 天</button>
+    <button class="ghost sm" data-min="129600">90 天</button>
+  </div>
+  <div class="chart-box his-chart"><canvas id="chart-history"></canvas></div>
+  <p class="muted" id="his-info">数据保存在本机 history.db，保留时长可在设置里调整。</p>
+</div>
+
+<!-- 拨测抽屉（beta2.2） -->
+<div id="probes-mask" class="mask hidden"></div>
+<div id="probes-panel" class="panel wide hidden">
+  <div class="panel-head">
+    <h2>服务拨测</h2>
+    <button class="ghost sm" id="btn-probe-close">关闭</button>
+  </div>
+  <p class="muted">探测任意服务的存活：TCP 端口 / HTTP 网页 / ping。由本机直接发起，不需要 SSH；连续失败达到次数才告警并推送。</p>
+  <div id="probe-list" class="probe-list"></div>
+  <button class="primary block" id="btn-probe-add">＋ 添加拨测</button>
+  <form id="probe-form" class="sv-form hidden" autocomplete="off">
+    <h3 id="probe-form-title">添加拨测</h3>
+    <div class="cfg-row2">
+      <label>名称（英文/数字）<input id="pb-name" placeholder="nginx443" spellcheck="false"></label>
+      <label>类型<select id="pb-type" class="sel">
+        <option value="tcp">TCP 端口</option>
+        <option value="http">HTTP 网页</option>
+        <option value="ping">ping</option>
+      </select></label>
+    </div>
+    <div class="cfg-row2">
+      <label>地址 / IP（http 可填完整 URL）<input id="pb-host" placeholder="192.168.1.100" spellcheck="false"></label>
+      <label>端口（ping 不需要）<input id="pb-port" type="number" min="1" max="65535" value="443"></label>
+    </div>
+    <div class="cfg-row2">
+      <label>路径（http 用）<input id="pb-path" placeholder="/" spellcheck="false"></label>
+      <label>网页需包含（可选）<input id="pb-expect" placeholder="可选，例如 healthy"></label>
+    </div>
+    <div class="cfg-row2" id="pb-http">
+      <label>期望 HTTP 状态码<input id="pb-codes" value="200-399" placeholder="200-299,304"></label>
+      <label>最大响应耗时（毫秒，0 关闭）<input id="pb-max-ms" type="number" min="0" max="30000" value="0"></label>
+    </div>
+    <div class="cfg-row3">
+      <label>间隔 秒<input id="pb-interval" type="number" min="5" max="3600" value="30"></label>
+      <label>连续失败几次才告警<input id="pb-threshold" type="number" min="1" max="20" value="2"></label>
+    </div>
+    <p class="err" id="pb-err"></p>
+    <div class="panel-actions">
+      <button type="button" class="ghost" id="btn-probe-cancel">取消</button>
+      <button type="submit" class="primary" id="btn-probe-save">保存</button>
+    </div>
+  </form>
+</div>
+
+<!-- 设置抽屉 -->
+<div id="config-mask" class="mask hidden"></div>
+<div id="config-panel" class="panel hidden">
+  <div class="panel-head">
+    <h2>设置</h2>
+    <button class="ghost sm" id="btn-cfg-close">关闭</button>
+  </div>
+  <h3>历史数据</h3>
+  <label>数据库保留天数<input id="cfg-keep-days" type="number" min="1" max="365" step="1"></label>
+  <h3>持续资源告警</h3>
+  <p class="hint">剩余比例达到触发线并持续指定时间后告警。剩余比例超过恢复线时解除。主机专用规则优先，其次按资源和挂载点匹配。</p>
+  <div id="rule-list"></div><button id="add-rule" class="ghost sm">添加规则</button>
+  <h3>即时告警阈值</h3>
+  <div class="cfg-row3">
+    <label>温度 ℃<input id="cfg-temp" type="number" step="1" min="0" max="200"></label>
+    <label>内存可用 %<input id="cfg-mem" type="number" step="1" min="0" max="100"></label>
+    <label>根分区可用 G<input id="cfg-root" type="number" step="0.5" min="0"></label>
+  </div>
+  <h3>采集</h3>
+  <div class="cfg-row3">
+    <label>间隔 秒<input id="cfg-interval" type="number" step="0.5" min="0.5" max="60"></label>
+    <label>实时历史（分钟）<input id="cfg-history" type="number" step="1" min="1" max="1440"></label>
+  </div>
+  <h3>Web 登录（浏览器访问时用）</h3>
+  <div class="cfg-row3">
+    <label>账号<input id="cfg-webuser"></label>
+    <label>新密码<input id="cfg-webpass" type="password" placeholder="留空不修改"></label>
+  </div>
+  <h3>通知投递记录</h3>
+  <details id="delivery-panel"><summary>查看最近 200 次投递</summary>
+    <button class="ghost sm" id="refresh-deliveries">刷新记录</button><div id="delivery-list"></div>
+  </details>
+  <h3>告警推送</h3>
+  <label class="chk"><input type="checkbox" id="nt-enabled"><span>启用告警推送到外部通道</span></label>
+  <div class="cfg-row3">
+    <label>同一告警冷却 分钟<input id="nt-dedup" type="number" min="0" max="1440" step="1"></label>
+    <label>心跳间隔 分钟（0=关）<input id="nt-heartbeat" type="number" min="0" max="1440" step="1"></label>
+  </div>
+  <div class="cfg-row3">
+    <label>静默开始（可空，如 02:00）<input id="nt-quiet-start" placeholder="02:00" spellcheck="false"></label>
+    <label>静默结束（可空，如 06:00）<input id="nt-quiet-end" placeholder="06:00" spellcheck="false"></label>
+  </div>
+  <label>Server酱 SendKey（微信接收，推荐）<input id="nt-serverchan" type="password" placeholder="留空 = 不修改"></label>
+  <p class="hint" id="nt-serverchan-has"></p>
+  <div class="cfg-row2">
+    <label>Telegram Bot Token<input id="nt-tg-token" type="password" placeholder="留空 = 不修改"></label>
+    <label>Telegram Chat ID<input id="nt-tg-chat" spellcheck="false"></label>
+  </div>
+  <div class="cfg-row2">
+    <label>SMTP 服务器<input id="nt-smtp-host" placeholder="smtp.qq.com" spellcheck="false"></label>
+    <label>端口<input id="nt-smtp-port" type="number" min="1" max="65535" value="465"></label>
+  </div>
+  <div class="cfg-row2">
+    <label>邮箱账号<input id="nt-smtp-user" spellcheck="false"></label>
+    <label>邮箱密码/授权码<input id="nt-smtp-pass" type="password" placeholder="留空 = 不修改"></label>
+  </div>
+  <label>收件邮箱（多个用逗号隔开）<input id="nt-smtp-to" spellcheck="false"></label>
+  <label>WebHook 地址（POST JSON）<input id="nt-webhook" type="password" placeholder="https://... 留空 = 不修改"></label>
+  <p class="hint">填好凭据后点对应按钮发测试消息验证。静默时段内告警只记录不发送；心跳不受静默限制。</p>
+  <div class="panel-actions" style="justify-content:flex-start">
+    <button class="ghost sm" id="btn-test-serverchan">测试 Server酱</button>
+    <button class="ghost sm" id="btn-test-telegram">测试 Telegram</button>
+    <button class="ghost sm" id="btn-test-smtp">测试 邮件</button>
+    <button class="ghost sm" id="btn-test-webhook">测试 WebHook</button>
+  </div>
+  <h3>Windows 服务（beta2.2）</h3>
+  <p class="hint" id="svc-info">把后端注册成系统服务：开机自启、崩溃自动拉起，监听 127.0.0.1:8787（浏览器访问）。服务模式与桌面窗口模式请二选一运行。</p>
+  <p class="err" id="svc-err"></p>
+  <div class="panel-actions" style="justify-content:flex-start">
+    <button class="ghost sm" id="btn-svc-refresh">刷新状态</button>
+    <button class="ghost sm" id="btn-svc-install">安装并启动</button>
+    <button class="ghost sm" id="btn-svc-uninstall">卸载服务</button>
+  </div>
+  <p class="muted" id="cfg-info"></p>
+  <p class="err" id="cfg-err"></p>
+  <div class="panel-actions">
+    <button class="ghost" id="btn-cfg-quit">退出程序</button>
+    <button class="primary" id="btn-cfg-save">保存并应用</button>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="js/vendor/chart.umd.min.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

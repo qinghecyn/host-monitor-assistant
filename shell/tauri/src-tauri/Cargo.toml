@@ -1,0 +1,27 @@
+[package]
+name = "xiaozhushou-monitor"
+version = "1.4.0"
+description = "主机监控小助手 - 桌面版（自带后端，装完即用）"
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Rust 后端：与桌面壳同进程，不再拉起 PyInstaller sidecar
+xmm = { path = "../../../rs/xmm" }
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+opt-level = "s"
+panic = "abort"
