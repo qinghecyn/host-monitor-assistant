@@ -116,6 +116,9 @@ impl StreamParser {
         f.insert("disks".into(), json!([]));
         f.insert("network".into(), json!([]));
         f.insert("docker".into(), Value::Null);
+        f.insert("processes".into(), json!([]));
+        f.insert("proc_summary".into(), Value::Null);
+        f.insert("net_connections".into(), Value::Null);
 
         let mut ts: Option<f64> = None;
         let mut cpu_raw: Option<&str> = None;
@@ -124,6 +127,9 @@ impl StreamParser {
         let mut load: Option<Vec<Option<f64>>> = None;
         let mut dkp_raw: Option<&str> = None;
         let mut dkst_raw: Option<&str> = None;
+        let mut ptop_raw: Option<&str> = None;
+        let mut psum_raw: Option<&str> = None;
+        let mut con_raw: Option<&str> = None;
 
         for seg in line.split('|') {
             let Some(eq) = seg.find('=') else { continue };
@@ -176,6 +182,9 @@ impl StreamParser {
                 }
                 "DKP" => dkp_raw = Some(val),
                 "DKST" => dkst_raw = Some(val),
+                "PTOP" => ptop_raw = Some(val),
+                "PSUM" => psum_raw = Some(val),
+                "CON" => con_raw = Some(val),
                 _ => {}
             }
         }
@@ -183,6 +192,21 @@ impl StreamParser {
         f.insert("cpu".into(), self.parse_cpu(cpu_raw, load, ts));
         f.insert("network".into(), self.parse_net(net_raw, ts));
         f.insert("disks".into(), self.parse_disks(disk_raw, ts));
+
+        // 进程 / 连接（beta1.4.3）：mem_percent 用同帧 MEM 的总量换算，缺 MEM 就留空
+        if let Some(raw) = psum_raw {
+            f.insert("proc_summary".into(), parse_proc_summary(raw));
+        }
+        if let Some(raw) = ptop_raw {
+            let mem_total_kb = f
+                .get("memory")
+                .and_then(|m| m.get("total_kb"))
+                .and_then(|v| v.as_f64());
+            f.insert("processes".into(), parse_proc_top(raw, mem_total_kb));
+        }
+        if let Some(raw) = con_raw {
+            f.insert("net_connections".into(), parse_con(raw));
+        }
 
         // Docker 容器列表合并（daemon=ok 时）
         let daemon_ok = f
@@ -453,6 +477,64 @@ fn parse_disk_counters(val: &str) -> Vec<(String, String, i64, i64, i64, i64)> {
         ));
     }
     out
+}
+
+/// PSUM 段（beta1.4.3）：`PSUM=<进程总数>,<运行中>,<僵尸>`。
+fn parse_proc_summary(val: &str) -> Value {
+    let parts: Vec<Option<i64>> = val.split(',').take(3).map(to_int).collect();
+    if parts.len() < 3 {
+        return Value::Null;
+    }
+    let (Some(total), Some(running), Some(zombie)) = (parts[0], parts[1], parts[2]) else {
+        return Value::Null;
+    };
+    json!({"total": total, "running": running, "zombie": zombie})
+}
+
+/// PTOP 段（beta1.4.3）：`PTOP=<pid>,<cpu%>,<rssKB>,<进程名>;...`（按 cpu% 降序取前 8）。
+/// cpu% 首帧为空 → null；mem_percent 由 rssKB / MEM 总量换算，MEM 缺失留空。
+fn parse_proc_top(val: &str, mem_total_kb: Option<f64>) -> Value {
+    let mut out = Vec::new();
+    for ent in val.split(';') {
+        if ent.is_empty() {
+            continue;
+        }
+        let mut it = ent.splitn(4, ',');
+        let pid = it.next().unwrap_or("").trim();
+        let cpu = it.next().and_then(to_float);
+        let rss_kb = it.next().and_then(to_float);
+        let name = it.next().unwrap_or("").trim();
+        let Some(pid) = to_int(pid) else { continue };
+        if name.is_empty() {
+            continue;
+        }
+        let mem_percent = match (rss_kb, mem_total_kb) {
+            (Some(r), Some(t)) if t > 0.0 => Some(r1(100.0 * r / t)),
+            _ => None,
+        };
+        out.push(json!({
+            "pid": pid,
+            "cpu_percent": cpu.map(r1).map(|v| json!(v)).unwrap_or(Value::Null),
+            "mem_percent": mem_percent.map(|v| json!(v)).unwrap_or(Value::Null),
+            "rss_kb": rss_kb.map(|v| json!(r1(v))).unwrap_or(Value::Null),
+            "name": name,
+        }));
+    }
+    Value::Array(out)
+}
+
+/// CON 段（beta1.4.3）：`CON=<ESTAB>,<TIME_WAIT>,<LISTEN>,<UDP套接字>`。
+fn parse_con(val: &str) -> Value {
+    let parts: Vec<Option<i64>> = val.split(',').take(4).map(to_int).collect();
+    if parts.len() < 4 {
+        return Value::Null;
+    }
+    let (Some(established), Some(time_wait), Some(listen), Some(udp)) =
+        (parts[0], parts[1], parts[2], parts[3])
+    else {
+        return Value::Null;
+    };
+    json!({"established": established, "time_wait": time_wait, "listen": listen, "udp": udp})
 }
 
 fn parse_temps(val: &str) -> Value {

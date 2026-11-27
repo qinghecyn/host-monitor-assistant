@@ -83,6 +83,16 @@ impl State {
             .and_then(|v| v.as_f64())
             .unwrap_or(90.0);
         let store = Store::new(data_dir.join("history.db"), keep_days, 5.0);
+        {
+            let sample_s = cfg
+                .read()
+                .unwrap()
+                .get("history")
+                .and_then(|h| h.get("sample_s"))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(60.0);
+            store.set_sample_s(sample_s);
+        }
 
         let cfg_for_notify = cfg.clone();
         let notify = Notify::new(Arc::new(move || cfg_for_notify.read().unwrap().clone()), store.clone());
@@ -400,6 +410,7 @@ impl State {
             }
         }
         self.store.set_keep_days(new["history"]["keep_days"].as_f64().unwrap_or(90.0));
+        self.store.set_sample_s(new["history"]["sample_s"].as_f64().unwrap_or(60.0));
         if old["probes"] != new["probes"] {
             self.probe_mgr.restart();
             self.hub.broadcast(&json!({"type": "probe", "probes": self.probe_mgr.status()}));

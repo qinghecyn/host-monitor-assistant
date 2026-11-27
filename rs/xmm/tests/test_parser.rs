@@ -425,3 +425,89 @@ fn gpu_metrics_into_store() {
     assert_eq!(get("gpu.temp_c"), Some(70.0));
     assert_eq!(get("gpu.power_w"), Some(150.0));
 }
+
+// ---------- 进程 / 连接段（beta1.4.3） ----------
+
+#[test]
+fn proc_segments_full_frame() {
+    let mut p = StreamParser::new();
+    let f = p
+        .parse(
+            "T=1000|MEM=1048576,524288,65536,262144\
+             |PSUM=128,2,1\
+             |PTOP=1234,55.5,380000,dockerd;99,,1200,(sd-pam)\
+             |CON=24,60,12,8",
+        )
+        .unwrap();
+    let ps = f["proc_summary"].clone();
+    assert_eq!(ps["total"], 128);
+    assert_eq!(ps["running"], 2);
+    assert_eq!(ps["zombie"], 1);
+
+    let procs = f["processes"].as_array().unwrap();
+    assert_eq!(procs.len(), 2);
+    assert_eq!(procs[0]["pid"], 1234);
+    assert_eq!(procs[0]["name"], "dockerd");
+    assert_eq!(procs[0]["cpu_percent"], 55.5);
+    // mem_percent 用同帧 MEM 总量换算：380000/1048576 ≈ 36.2%
+    assert_eq!(procs[0]["mem_percent"], 36.2);
+    assert_eq!(procs[0]["rss_kb"], 380000.0);
+    // 首帧 cpu% 为空 → null；名字里的括号原样保留
+    assert_eq!(procs[1]["cpu_percent"], Value::Null);
+    assert_eq!(procs[1]["name"], "(sd-pam)");
+
+    let con = f["net_connections"].clone();
+    assert_eq!(con["established"], 24);
+    assert_eq!(con["time_wait"], 60);
+    assert_eq!(con["listen"], 12);
+    assert_eq!(con["udp"], 8);
+}
+
+#[test]
+fn proc_segments_missing_leave_defaults() {
+    let mut p = StreamParser::new();
+    let f = p.parse("T=1000|MEM=1048576,524288,65536,262144").unwrap();
+    assert_eq!(f["processes"], serde_json::json!([]));
+    assert!(f["proc_summary"].is_null());
+    assert!(f["net_connections"].is_null());
+}
+
+#[test]
+fn proc_segments_corrupted_do_not_kill_frame() {
+    let mut p = StreamParser::new();
+    let f = p.parse("T=1000|U=10|PSUM=x|PTOP=abc,def|CON=").unwrap();
+    assert_eq!(f["uptime_s"], 10);
+    assert!(f["proc_summary"].is_null());
+    assert_eq!(f["processes"], serde_json::json!([]));
+    assert!(f["net_connections"].is_null());
+}
+
+#[test]
+fn proc_mem_percent_null_without_mem_total() {
+    let mut p = StreamParser::new();
+    let f = p.parse("T=1000|PTOP=1,2.0,4096,bash").unwrap();
+    let procs = f["processes"].as_array().unwrap();
+    assert_eq!(procs.len(), 1);
+    assert_eq!(procs[0]["mem_percent"], Value::Null);
+    assert_eq!(procs[0]["cpu_percent"], 2.0);
+}
+
+#[test]
+fn proc_and_con_metrics_into_store() {
+    let mut p = StreamParser::new();
+    let f = p
+        .parse("T=1000|PSUM=128,2,1|PTOP=1,50.0,4096,bash|CON=24,60,12,8")
+        .unwrap();
+    let pts = frame_metrics(&f, "h");
+    let get = |m: &str| {
+        pts.iter()
+            .find(|(_, _, k, _)| k == m)
+            .map(|(_, _, _, v)| *v)
+    };
+    assert_eq!(get("proc.count"), Some(128.0));
+    assert_eq!(get("proc.running"), Some(2.0));
+    assert_eq!(get("proc.zombie"), Some(1.0));
+    assert_eq!(get("con.established"), Some(24.0));
+    assert_eq!(get("con.time_wait"), Some(60.0));
+    assert_eq!(get("con.listen"), Some(12.0));
+}

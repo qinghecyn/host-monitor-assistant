@@ -13,7 +13,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-BSD%203--Clause-blue.svg" alt="BSD 3-Clause"></a>
   <img src="https://img.shields.io/badge/backend-Rust%20%2B%20axum%20%2B%20tokio-orange" alt="Rust">
   <img src="https://img.shields.io/badge/installer-3.1%20MiB-brightgreen" alt="3.1 MiB">
-  <img src="https://img.shields.io/badge/tests-42%20passed-brightgreen" alt="tests">
+  <img src="https://img.shields.io/badge/tests-51%20passed-brightgreen" alt="tests">
+  <img src="https://img.shields.io/badge/version-1.4.3-blue" alt="version">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Browser%20%7C%20Android-lightgrey" alt="platform">
 </p>
 
@@ -29,7 +30,7 @@
 - [设计取向](#设计取向)
 - [和常见方案比](#和常见方案比)
 - [功能一览](#功能一览)
-- [快速开始](#快速开始)
+- [下载与快速开始](#下载与快速开始)
 - [从源码编译](#从源码编译)
 - [配置与安全](#配置与安全)
 - [目录结构](#目录结构)
@@ -42,7 +43,8 @@
 一个把「家里 / 机房里那几台 Linux 机器现在怎么样」这件事做到**装完即用**的监控工具：
 
 - **被监控端零安装**：不装 agent、不开额外端口、不改配置。一条 SSH 长连接注入只读采集脚本
-  （`sh -s`，内存执行、不落盘），CPU / 内存 / 温度 / 风扇 / GPU / 磁盘 / 全部网卡 / Docker 容器负载秒级刷新。
+  （`sh -s`，内存执行、不落盘），CPU / 内存 / 温度 / 风扇 / GPU / 磁盘 / 全部网卡 /
+  进程 Top / 连接概览 / Docker 容器负载秒级刷新。
 - **监控端一个进程**：Rust 后端（axum + russh + SQLite）与桌面壳（Tauri）编译在**同一个 exe** 里。
   没有 Python 运行时、没有数据库服务、没有 Docker、没有 sidecar 子进程。
 - **三端同源**：Windows 桌面安装包（3.1 MiB）、独立后端浏览器版（单文件 7 MB）、
@@ -61,13 +63,13 @@
 它不做「什么都监控」，只把下面几件事做扎实：
 
 ### 1. 被监控机近乎零足迹
-远端只执行 `cat /proc/*`、`df`、`docker ps/stats` 等**只读命令**，脚本经 stdin 注入内存执行，
+远端只执行 `cat /proc/*`、`df`、`ps`、`docker ps/stats` 等**只读命令**，脚本经 stdin 注入内存执行，
 不写文件、不留常驻进程、不开端口。对闪存寿命敏感的软路由 / eMMC 开发板比较友好。
 （对比：Netdata 要装包跑服务，node_exporter 要开 9100 端口，Zabbix agent 要改配置注册。）
 
 ### 2. 弱环境可用
 采集脚本是纯 POSIX sh + awk，BusyBox 直接跑：OpenWrt / iStoreOS 不需要 bash、Python、coreutils。
-实测 iStoreOS 一台上解析出 19 张网卡、Docker 容器、4 路风扇、3 路温度。
+实测 iStoreOS 一台上解析出 19 张网卡、Docker 容器、4 路风扇、3 路温度、进程与连接。
 
 ### 3. 单文件就是完整监控系统
 后端 + SSH 客户端 + 历史库（内嵌 SQLite）+ Web 服务器 + 告警推送 + 拨测，全在一个
@@ -101,27 +103,38 @@
 ## 功能一览
 
 - **实时曲线**（5 分钟环形缓冲）：CPU 总/每核、负载、内存、最高温度、网络上下行
+- **进程与连接（1.4.3 新增）**：进程总数 / 运行 / 僵尸、按 CPU% 排序的进程 Top 8
+  （PID、CPU%、内存%、RSS）、连接概览（ESTAB / TIME_WAIT / 监听 / UDP）
 - **多网卡**：全部接口逐行展示，自动评选主网卡；点选任意接口"监督"，速率 kbps/Mbps/Gbps 或 KiB/s/MiB/s/GiB/s 双格式自适应
 - **磁盘**：使用率 + 读写速率（MiB/s / GiB/s 切换），设备名 / 挂载点显示切换
 - **温度 / 风扇 / GPU**：hwmon 全传感器；NVIDIA / AMD / Intel GPU 占用、显存、温度、功耗
 - **Docker**：容器列表 + 每容器 CPU / 内存 / 网络 IO / 块 IO（`docker stats` 口径）
-- **历史趋势**：SQLite 落盘（默认保留 90 天，可调），任意指标 1 分钟~1 年查询，自动降采样
+- **历史趋势**：SQLite 落盘（默认保留 90 天，可调），任意指标 1 分钟~1 年查询，自动降采样；
+  写时窗口均值聚合（`history.sample_s`，默认 60 秒），数据库不随采集频率膨胀
 - **告警**：阈值 + 持续型资源规则，边沿去重 / 恢复通知 / 静默时段 / 心跳，四通道推送
 - **拨测**：TCP / HTTP（状态码 + 期望内容 + 耗时上限）/ Ping，防抖与恢复事件
 - **多主机管理**：界面增删改查即改 `config.toml`（原子写 + .bak），改连接参数只重连那一台
 - **Windows 服务**：可选 WinSW 注册开机自启（`/api/service`）
 - **安全**：SSH 主机指纹严格校验（autoadd/strict）、密码可走环境变量/系统凭据管理器、Web token 鉴权、登录限速
 
-## 快速开始
+## 下载与快速开始
+
+从 [Releases](https://github.com/qinghecyn/host-monitor-assistant/releases) 下载（文件名均为英文）：
+
+| 文件 | 用途 |
+|---|---|
+| `host-monitor-assistant-x.y.z-x64-setup.exe` | Windows 桌面版安装包（约 3 MiB，推荐） |
+| `xmm-server-x.y.z-win-x64.exe` | 独立后端 / 浏览器版 / Windows 服务（单文件） |
+| `xiaozhushou-monitor-android-x.y.z.apk` | 安卓 App（Android 13+，arm64） |
 
 ### 方式 A：Windows 桌面版（推荐）
-1. 从 Releases 下载 `主机监控小助手_x.y.z_x64-setup.exe`（约 3 MiB），一路下一步（无需管理员）。
+1. 下载 `host-monitor-assistant-x.y.z-x64-setup.exe`，一路下一步（无需管理员）。
 2. 打开程序 → **服务器 → 添加服务器**：填 IP / SSH 端口 / 账号 / 密码（或私钥路径）→ 测试连接 → 保存。
 3. 完成。关窗口收托盘继续监控；托盘菜单或界面"退出"才真正停止。
 
 ### 方式 B：浏览器版 / 服务模式（任意 Windows 机器）
 ```bat
-xmm-server.exe --open-browser
+xmm-server-x.y.z-win-x64.exe --open-browser
 :: 默认 http://127.0.0.1:8787
 :: 首次启动请在设置里设置 Web 密码（默认监听 0.0.0.0 时更务必设置）
 ```
@@ -132,13 +145,14 @@ xmm-server.exe --open-browser
 
 ### 方式 C：没有目标机？先看演示
 ```bat
-xmm-server.exe --mock --port 8899 --open-browser
+xmm-server-x.y.z-win-x64.exe --mock --port 8899 --open-browser
 :: 界面里随便加一台服务器，即出全套模拟曲线
 ```
 
 ### 安卓端
-独立分支仓库（Rust `.so` + JNI 壳），APK 直接安装；添加服务器操作与桌面一致。
+APK 直接安装（见上表）；添加服务器操作与桌面一致。
 首次启动按引导把电池策略设为"无限制"，切后台/灭屏采集不断线。
+源码在独立分支仓库 [host-monitor-assistant-android](https://github.com/qinghecyn/host-monitor-assistant-android)。
 
 ## 从源码编译
 
@@ -146,10 +160,11 @@ xmm-server.exe --mock --port 8899 --open-browser
 不需要 Python、不需要 OpenSSL（TLS 走系统 SChannel / ring）。
 
 ```bat
-git clone <你的仓库地址> host-monitor && cd host-monitor
+git clone https://github.com/qinghecyn/host-monitor-assistant.git && cd host-monitor-assistant
 
-:: 1) 跑测试（42 例）
+:: 1) 跑测试（51 例）+ 采集脚本回归
 cargo test --manifest-path rs\xmm\Cargo.toml
+sh scripts/test_collect_segments.sh
 
 :: 2) 浏览器版（debug 运行）
 cargo run --manifest-path rs\xmm\Cargo.toml --bin xmm-server -- --mock --port 8899
@@ -169,20 +184,24 @@ packaging\build_all.bat
 Linux/macOS 上可直接 `cargo run --manifest-path rs/xmm/Cargo.toml --bin xmm-server` 跑浏览器版
 （桌面壳打包链路目前只针对 Windows NSIS）。
 
+## 配置与安全
+
 - 首次运行自动生成 `config.toml`（模板见 [config.example.toml](config.example.toml)），界面改设置即时生效并原子落盘（保留 `.bak`）。
 - **密码优先级**：目标明文 password（仅兜底）→ 环境变量（`password_env` / `MON_PASSWORD`）→ Windows 凭据管理器；Web 密码支持 `MON_WEB_PASSWORD`。
 - **SSH 指纹**：首连记录（autoadd），此后严格校验；可切 strict 只信任已有 known_hosts。旧 asyncssh 记录的 RSA-only 指纹兼容。
 - 凭据不写日志、不回传前端（接口只回"有没有配"）；远端全部只读命令。
+- **历史落盘**：`[history] keep_days` 保留天数（默认 90），`sample_s` 落盘采样窗口（默认 60 秒，
+  同名指标窗口内取平均），实时曲线不受影响（内存里仍是秒级）。
 
 ## 目录结构
 
 ```
-rs/xmm/                 Rust 后端（唯一后端实现，42 例测试）
+rs/xmm/                 Rust 后端（唯一后端实现，51 例测试）
   src/parser.rs         行协议 → 结构化帧（逐段容错，速率本地差值）
   src/ssh.rs            russh 长连接 / 重连退避 / 看门狗 / 指纹校验
   src/state.rs          采集器生命周期 / 快照 / 告警边沿
   src/api.rs            axum 路由 / WebSocket / 鉴权
-  src/store.rs          SQLite 历史（WAL / 批量写 / 降采样 / 自动清理）
+  src/store.rs          SQLite 历史（WAL / 批量写 / 写时聚合 / 自动清理）
   src/alerts.rs         阈值 + 持续型资源规则（滞回）
   src/notify.rs         Server酱 / Telegram / SMTP / WebHook
   src/probes.rs         TCP / HTTP / Ping 拨测
@@ -192,7 +211,7 @@ web/                    原生 JS 前端（无构建步骤，Chart.js 本地 ven
 shell/tauri/            Windows 桌面壳（与后端同进程，托盘/免登录）
 packaging/build_all.bat 一键打包
 docs/                   协议定义 / 开发文档 / 截图
-scripts/                API 验收脚本
+scripts/                API 验收脚本 + 采集段回归（test_collect_segments.sh）
 ```
 
 深入阅读：[docs/协议与数据格式.md](docs/协议与数据格式.md) · [docs/beta2.4-rust-后端重构.md](docs/beta2.4-rust-后端重构.md) · [docs/开发文档.md](docs/开发文档.md)
@@ -200,7 +219,7 @@ scripts/                API 验收脚本
 ## 常见问题
 
 **Q：目标机是群晖 / PVE / 树莓派可以吗？**
-可以。有 SSH + POSIX sh 就行；Docker / 温度 / 风扇段按实际硬件自动出现或省略。
+可以。有 SSH + POSIX sh 就行；Docker / 温度 / 风扇 / 进程段按实际硬件自动出现或省略。
 
 **Q：SSH 密码放哪安全？**
 用 `password_env` 指到环境变量，或存入 Windows 凭据管理器；`config.toml` 里就不会出现明文。
@@ -210,7 +229,13 @@ scripts/                API 验收脚本
 远端脚本挂起有看门狗兜底。重连后首个速率帧为 null，不产虚假尖峰。
 
 **Q：历史数据占多少磁盘？**
-长表 + 每小时自动清理过期数据（默认 90 天）。几台主机跑一年也就几十 MB 量级。
+长表 + 每小时自动清理过期数据（默认 90 天）。落盘按 `history.sample_s`（默认 60 秒）
+写时聚合，几台主机跑一年在几百 MB 量级；把 `sample_s` 调大或缩短 `keep_days` 可以更小，
+实时曲线不受影响。
+
+**Q：进程卡片的 CPU% 为什么第一秒是空的？**
+CPU% 由相邻两帧的 `/proc` 差值算出（100% = 单核满载），连接建立后的第一帧没有上一帧，
+留空属正常，第二秒起就有值。
 
 **Q：为什么不做 Linux 桌面壳？**
 浏览器版在 Linux 上体验一致；桌面壳当前只出 Windows NSIS 包，欢迎 PR。

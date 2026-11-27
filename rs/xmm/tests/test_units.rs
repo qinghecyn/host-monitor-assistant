@@ -116,13 +116,13 @@ fn config_roundtrip_keeps_order_and_comments() {
         .as_object_mut()
         .unwrap()
         .insert("router".into(), json!({
-            "host": "192.168.1.100", "port": 22, "username": "root",
+            "host": "10.2.0.254", "port": 22, "username": "root",
             "password": "***", "label": "客厅路由器", "host_key_policy": "autoadd"
         }));
     cfg["probes"]
         .as_object_mut()
         .unwrap()
-        .insert("web".into(), json!({"type": "http", "host": "192.168.1.100", "port": 80, "path": "/"}));
+        .insert("web".into(), json!({"type": "http", "host": "10.2.0.254", "port": 80, "path": "/"}));
     config::save_config(&path, &cfg).unwrap();
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.contains("[targets.router]"));
@@ -130,7 +130,7 @@ fn config_roundtrip_keeps_order_and_comments() {
     assert!(text.contains("主机监控小助手"));
     assert!(path.with_file_name("config.toml.bak").exists() == false || true); // 首写无 .bak
     let loaded = config::load_config(&path);
-    assert_eq!(loaded["targets"]["router"]["host"], "192.168.1.100");
+    assert_eq!(loaded["targets"]["router"]["host"], "10.2.0.254");
     assert_eq!(loaded["targets"]["router"]["port"], 22);
     assert_eq!(loaded["probes"]["web"]["type"], "http");
     // 默认值合并：未写的段也有默认
@@ -173,4 +173,74 @@ fn normalize_target_validates() {
     assert!(config::valid_name("router-1_ok"));
     assert!(!config::valid_name("a.b"));
     assert!(!config::valid_name(""));
+}
+
+#[test]
+fn config_roundtrip_escapes_control_chars() {
+    let dir = std::env::temp_dir().join(format!("xmm-cfg4-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config.toml");
+    let mut cfg = config::defaults();
+    cfg["targets"]
+        .as_object_mut()
+        .unwrap()
+        .insert("n1".into(), json!({
+            "host": "1.2.3.4", "port": 22, "username": "root",
+            "password": "p\"w\nline", "label": "a\tb", "host_key_policy": "autoadd"
+        }));
+    config::save_config(&path, &cfg).unwrap();
+    // 换行/引号/制表符必须转义，否则 TOML 解析失败 → 整份配置回退默认值
+    let loaded = config::load_config(&path);
+    assert_eq!(loaded["targets"]["n1"]["password"], "p\"w\nline");
+    assert_eq!(loaded["targets"]["n1"]["label"], "a\tb");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------- Store：写时窗口均值（beta1.4.3 落盘限流） ----------
+
+#[test]
+fn store_add_frame_windows_average_per_sample_s() {
+    let dir = std::env::temp_dir().join(format!("xmm-store2-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("history.db");
+    let store = Store::new(db, 90.0, 1.0);
+    store.set_sample_s(10.0);
+    let base = xmm::now_ts() - 1000.0;
+    // 30 帧 × 1 秒 → 期望只落 3 个窗口均值（4.5 / 14.5 / 24.5），而不是 30 个原始点
+    for i in 0..30 {
+        let ts = base + i as f64;
+        store.add_frame("h1", &json!({"ts": ts, "cpu": {"percent": i as f64}}));
+    }
+    store.flush();
+    let pts = store.query("h1", "cpu.percent", base, base + 30.0, 800);
+    assert_eq!(pts.len(), 3);
+    let vals: Vec<f64> = pts.iter().map(|p| p[1]).collect();
+    assert_eq!(vals, vec![4.5, 14.5, 24.5]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------- SSH 行缓冲（beta1.4.3 UTF-8 分块修复） ----------
+
+#[test]
+fn drain_lines_reassembles_utf8_split_across_chunks() {
+    use xmm::ssh::drain_lines;
+    let mut buf = Vec::new();
+    // "OS=统信\n" 的字节流在「统」字中间被 SSH 数据块截断
+    let line = "OS=统信\n".as_bytes();
+    let (a, b) = line.split_at(5); // "OS=" + 统的前两字节
+    assert!(drain_lines(&mut buf, a).is_empty());
+    let out = drain_lines(&mut buf, b);
+    assert_eq!(out, vec!["OS=统信".to_string()]);
+    assert!(buf.is_empty());
+}
+
+#[test]
+fn drain_lines_handles_crlf_and_drops_oversized_buffer() {
+    use xmm::ssh::drain_lines;
+    let mut buf = Vec::new();
+    assert_eq!(drain_lines(&mut buf, b"abc\r\ndef\n"), vec!["abc", "def"]);
+    // 超过 4 MiB 还没有换行 → 整段丢弃，防止内存被异常远端吃光
+    let huge = vec![b'x'; 4 * 1024 * 1024 + 1];
+    assert!(drain_lines(&mut buf, &huge).is_empty());
+    assert!(buf.is_empty());
 }

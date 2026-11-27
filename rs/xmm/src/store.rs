@@ -31,6 +31,15 @@ CREATE INDEX IF NOT EXISTS idx_samples ON samples (host, metric, ts);
 
 type Point = (f64, String, String, f64);
 
+/// 挂载点 → 指标名安全片段（/mnt/data → _mnt_data）；只保留字母数字与 _.-。
+fn sanitize_metric(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        out.push(if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') { c } else { '_' });
+    }
+    out
+}
+
 /// 从一帧数据提取要落盘的指标点。
 pub fn frame_metrics(frame: &Value, host: &str) -> Vec<Point> {
     let mut out = Vec::new();
@@ -82,16 +91,19 @@ pub fn frame_metrics(frame: &Value, host: &str) -> Vec<Point> {
 
     if let Some(disks) = frame.get("disks").and_then(|d| d.as_array()) {
         for d in disks {
-            if d.get("mount").and_then(|m| m.as_str()) == Some("/") {
-                if let (Some(total), Some(avail)) = (
-                    d.get("total_kb").and_then(|v| v.as_f64()),
-                    d.get("available_kb").and_then(|v| v.as_f64()),
-                ) {
-                    if total > 0.0 {
+            let mount = d.get("mount").and_then(|m| m.as_str()).unwrap_or("");
+            if let (Some(total), Some(avail)) = (
+                d.get("total_kb").and_then(|v| v.as_f64()),
+                d.get("available_kb").and_then(|v| v.as_f64()),
+            ) {
+                if total > 0.0 {
+                    // 根分区沿用旧指标名（历史连续、前端指标表兼容）；其余挂载点逐盘落使用率
+                    if mount == "/" {
                         add("disk.root_used_percent", Some(100.0 * (1.0 - avail / total)));
+                    } else {
+                        add(&format!("disk.{}.used_percent", sanitize_metric(mount)), Some(100.0 * (1.0 - avail / total)));
                     }
                 }
-                break;
             }
         }
     }
@@ -101,6 +113,18 @@ pub fn frame_metrics(frame: &Value, host: &str) -> Vec<Point> {
             add("docker.running", dk.get("running").and_then(|v| v.as_f64()).or(Some(0.0)));
             add("docker.total", dk.get("total").and_then(|v| v.as_f64()).or(Some(0.0)));
         }
+    }
+
+    // 进程汇总 / 连接概览（beta1.4.3）：低基数标量，直接落
+    if let Some(ps) = frame.get("proc_summary") {
+        add("proc.count", ps.get("total").and_then(|v| v.as_f64()));
+        add("proc.running", ps.get("running").and_then(|v| v.as_f64()));
+        add("proc.zombie", ps.get("zombie").and_then(|v| v.as_f64()));
+    }
+    if let Some(c) = frame.get("net_connections") {
+        add("con.established", c.get("established").and_then(|v| v.as_f64()));
+        add("con.time_wait", c.get("time_wait").and_then(|v| v.as_f64()));
+        add("con.listen", c.get("listen").and_then(|v| v.as_f64()));
     }
 
     // GPU（beta2.4）：多卡取最大值作汇总指标（占用/显存/温度），功耗取总和
@@ -130,10 +154,20 @@ pub struct Store {
     flush_interval: f64,
 }
 
+/// 写时聚合窗口：sample_s 秒内的帧值取平均后落一个点，
+/// 避免 1 秒采集 × 90 天保留把 samples 表写到亿级行（beta1.4.3 修复）。
+struct PendWin {
+    start_ts: f64,
+    sum: f64,
+    n: u64,
+}
+
 struct StoreInner {
     conn: Option<Connection>,
     queue: Vec<Point>,
     pub keep_days: f64,
+    sample_s: f64,
+    pend: HashMap<(String, String), PendWin>,
 }
 
 impl Store {
@@ -142,6 +176,8 @@ impl Store {
             conn: None,
             queue: Vec::new(),
             keep_days: keep_days.max(1.0),
+            sample_s: 60.0,
+            pend: HashMap::new(),
         }));
         let st = Arc::new(Self {
             inner: inner.clone(),
@@ -193,12 +229,45 @@ impl Store {
         self.inner.lock().unwrap().keep_days = days.max(1.0);
     }
 
+    /// 历史落盘采样间隔（秒）：窗口内同名指标取平均落一个点。
+    pub fn set_sample_s(&self, seconds: f64) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.sample_s = seconds.clamp(5.0, 3600.0);
+    }
+
     pub fn add_frame(&self, host: &str, frame: &Value) {
         let pts = frame_metrics(frame, host);
         if pts.is_empty() {
             return;
         }
-        self.inner.lock().unwrap().queue.extend(pts);
+        use std::collections::hash_map::Entry;
+        let mut inner = self.inner.lock().unwrap();
+        let sample_s = inner.sample_s;
+        for (ts, host, metric, value) in pts {
+            let key = (host, metric);
+            let mut flush_pt: Option<Point> = None;
+            match inner.pend.entry(key) {
+                Entry::Occupied(mut e) => {
+                    let (h, m) = e.key().clone();
+                    let win = e.get_mut();
+                    if ts - win.start_ts < sample_s {
+                        win.sum += value;
+                        win.n += 1;
+                    } else {
+                        flush_pt = Some((win.start_ts, h, m, win.sum / win.n as f64));
+                        win.start_ts = ts;
+                        win.sum = value;
+                        win.n = 1;
+                    }
+                }
+                Entry::Vacant(e) => {
+                    e.insert(PendWin { start_ts: ts, sum: value, n: 1 });
+                }
+            }
+            if let Some(p) = flush_pt {
+                inner.queue.push(p);
+            }
+        }
     }
 
     pub fn add_point(&self, host: &str, metric: &str, value: f64, ts: Option<f64>) {
@@ -229,6 +298,17 @@ impl Store {
 
     pub fn flush(&self) {
         let mut inner = self.inner.lock().unwrap();
+        // 断连/停帧时窗口不会自然收口：超过 2×sample_s 的残留窗口直接落均值
+        let stale = now_ts() - inner.sample_s * 2.0;
+        let StoreInner { pend, queue, .. } = &mut *inner;
+        pend.retain(|(host, metric), win| {
+            if win.start_ts < stale {
+                queue.push((win.start_ts, host.clone(), metric.clone(), win.sum / win.n as f64));
+                false
+            } else {
+                true
+            }
+        });
         if inner.queue.is_empty() {
             return;
         }

@@ -134,7 +134,18 @@ fn fmt_value(v: &Value) -> String {
                 n.to_string()
             }
         }
-        Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+        Value::String(s) => {
+            // 必须转义 \n \r \t：note/label 里带换行会写坏 TOML，
+            // 下次启动解析失败会整份配置回退默认值（beta1.4.3 修复）
+            format!(
+                "\"{}\"",
+                s.replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\n', "\\n")
+                    .replace('\r', "\\r")
+                    .replace('\t', "\\t")
+            )
+        }
         Value::Array(_) => toml::Value::try_from(v).expect("validated TOML array").to_string(),
         _ => "null".into(),
     }

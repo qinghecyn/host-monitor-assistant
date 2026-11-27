@@ -523,15 +523,14 @@ impl HostCollector {
             channel.eof().await.map_err(|e| e.to_string())?;
             self.set_status(tx, "online").await;
 
-            let mut buf = String::new();
+            let mut buf: Vec<u8> = Vec::new();
             loop {
                 let msg = channel.wait().await;
                 match msg {
                     Some(russh::ChannelMsg::Data { data }) => {
-                        buf.push_str(&String::from_utf8_lossy(&data));
-                        while let Some(pos) = buf.find('\n') {
-                            let line = buf[..pos].to_string();
-                            buf = buf[pos + 1..].to_string();
+                        // 按字节攒行再解码：多字节 UTF-8（中文 OS 名/容器名）被
+                        // SSH 数据块边界截断时不会变乱码（beta1.4.3 修复）
+                        for line in drain_lines(&mut buf, &data) {
                             self.handle_line(tx, &mut parser, &line, last_frame);
                         }
                     }
@@ -562,6 +561,29 @@ impl HostCollector {
     }
 }
 
+/// 把 SSH 数据块追加到行缓冲，返回其中的完整行（按 \n 切分，兼容 \r\n）。
+///
+/// 按字节切分后再整体解码：多字节 UTF-8 字符被数据块边界截断时，
+/// `String::from_utf8_lossy` 不会把它变成 U+FFFD 乱码。
+/// 缓冲超过 4 MiB 仍未见换行时整体丢弃（防远端异常/卡死把内存吃光）。
+pub fn drain_lines(buf: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
+    buf.extend_from_slice(chunk);
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    while let Some(pos) = buf[start..].iter().position(|&b| b == b'\n') {
+        let end = start + pos;
+        out.push(String::from_utf8_lossy(&buf[start..end]).trim_end_matches('\r').to_string());
+        start = end + 1;
+    }
+    if start > 0 {
+        buf.drain(..start);
+    }
+    if buf.len() > 4 * 1024 * 1024 {
+        buf.clear();
+    }
+    out
+}
+
 /// 执行一条远端命令，把 stdout 按行收齐（用于 oneshot / 测试连接）。
 async fn exec_read_lines(
     session: &mut client::Handle<KeyHandler>,
@@ -574,15 +596,15 @@ async fn exec_read_lines(
         channel.data(&text.as_bytes()[..]).await.map_err(|e| e.to_string())?;
     }
     channel.eof().await.map_err(|e| e.to_string())?;
-    let mut out = String::new();
+    let mut out: Vec<u8> = Vec::new();
     loop {
         match channel.wait().await {
-            Some(russh::ChannelMsg::Data { data }) => out.push_str(&String::from_utf8_lossy(&data)),
+            Some(russh::ChannelMsg::Data { data }) => out.extend_from_slice(&data),
             Some(russh::ChannelMsg::Close) | None => break,
             Some(_) => {}
         }
     }
-    Ok(out.lines().map(|s| s.to_string()).collect())
+    Ok(String::from_utf8_lossy(&out).lines().map(|s| s.to_string()).collect())
 }
 
 // ---------------------------------------------------------------- 测试连接

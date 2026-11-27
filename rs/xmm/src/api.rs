@@ -120,8 +120,10 @@ async fn login(AxState(st): AxState<Shared>, req: axum::extract::Request) -> Res
         let p = secrets::get_web_password(cfg.get("auth").unwrap_or(&json!({})));
         (u, p)
     };
-    let ok = constant_time_eq(username.as_bytes(), want_u.as_bytes())
-        && constant_time_eq(password.as_bytes(), want_p.as_bytes());
+    // 两个比较都算完再 AND（避免 && 短路让密码比较被跳过，泄漏账号是否存在）
+    let ok_u = constant_time_eq(username.as_bytes(), want_u.as_bytes());
+    let ok_p = constant_time_eq(password.as_bytes(), want_p.as_bytes());
+    let ok = ok_u & ok_p;
     if !ok {
         tokio::time::sleep(std::time::Duration::from_millis(400)).await; // 降低爆破速率
         return Err(err(StatusCode::UNAUTHORIZED, "账号或密码错误"));
@@ -328,7 +330,7 @@ const ALLOWED_NOTIFY: [&str; 15] = [
     "smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_to",
     "webhook_url", "heartbeat_minutes", "_pad",
 ];
-const ALLOWED_HISTORY: [&str; 1] = ["keep_days"];
+const ALLOWED_HISTORY: [&str; 2] = ["keep_days", "sample_s"];
 const ALLOWED_PROBE: [&str; 10] = crate::probes::PROBE_FIELDS;
 
 fn keys_exceed(body: &Value, allowed: &[&str]) -> bool {
@@ -513,7 +515,10 @@ fn apply_settings(cfg: &mut Value, body: &Value) -> Result<(bool, Vec<String>), 
         }
         let cur = cfg.as_object_mut().unwrap()
             .entry("history").or_insert(json!({})).as_object_mut().unwrap();
-        cur.insert("keep_days".into(), json!(num(h.get("keep_days"), 1.0, 365.0, 90.0)));
+        let old_keep = cur.get("keep_days").and_then(|x| x.as_f64()).unwrap_or(90.0);
+        cur.insert("keep_days".into(), json!(num(h.get("keep_days"), 1.0, 365.0, old_keep)));
+        let old_sample = cur.get("sample_s").and_then(|x| x.as_f64()).unwrap_or(60.0);
+        cur.insert("sample_s".into(), json!(num(h.get("sample_s"), 5.0, 3600.0, old_sample)));
     }
 
     // probes（PUT /api/config 内嵌写法：host 清空 = 删除）

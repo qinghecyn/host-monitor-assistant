@@ -31,7 +31,7 @@ await page.screenshot({ path: OUT + '/03-servers.png' });
 await page.click('#btn-sv-add');
 await page.fill('#sv-name', 'vps');
 await page.fill('#sv-label', '香港小机');
-await page.fill('#sv-host', '192.168.1.101');
+await page.fill('#sv-host', '10.2.0.77');
 await page.fill('#sv-port', '2222');
 await page.fill('#sv-user', 'ubuntu');
 await page.fill('#sv-pass', 'secret');

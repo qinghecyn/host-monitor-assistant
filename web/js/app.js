@@ -444,7 +444,7 @@ function renderAll() {
   const hasTargets = state.targets.length > 0;
 
   $('empty-state').classList.toggle('hidden', hasTargets);
-  ['card-cpu', 'card-mem', 'card-temp', 'card-fan', 'card-gpu', 'card-net', 'card-disk', 'card-docker'].forEach((id) => {
+  ['card-cpu', 'card-mem', 'card-temp', 'card-fan', 'card-gpu', 'card-net', 'card-disk', 'card-proc', 'card-docker'].forEach((id) => {
     $(id).classList.toggle('hidden', !hasTargets);
   });
 
@@ -633,6 +633,9 @@ function renderAll() {
   // Docker 负载（beta2.0）
   renderDocker(latest && latest.docker, offline);
 
+  // 进程与连接（beta1.4.3）
+  renderProcs(latest, hasTargets);
+
   // 告警横幅
   const items = t.alerts || [];
   const banner = $('alert-banner');
@@ -668,6 +671,45 @@ function pickMonitoredNet(nets) {
     if (hit) return hit;
   }
   return pickPrimaryNet(nets);
+}
+
+// ---------- 进程与连接（beta1.4.3） ----------
+
+// 目标机没提供 PSUM/PTOP/CON 段（旧版采集脚本、极简环境）时整卡隐藏，
+// 不让"取不到"伪装成"没有"；有任一段就展开对应内容。
+function renderProcs(latest, hasTargets) {
+  const card = $('card-proc');
+  const ps = latest && latest.proc_summary;
+  const procs = (latest && latest.processes) || [];
+  const con = latest && latest.net_connections;
+  if (!hasTargets || (!ps && !procs.length && !con)) {
+    card.classList.add('hidden');
+    return;
+  }
+  card.classList.remove('hidden');
+  $('proc-summary').textContent = ps
+    ? `${ps.total} 个进程 · 运行 ${ps.running} · 僵尸 ${ps.zombie}${ps.zombie > 0 ? ' ⚠' : ''}`
+    : '';
+  $('proc-table-head').style.display = procs.length ? '' : 'none';
+  $('proc-list').innerHTML = procs.length
+    ? procs.map((p) => {
+        const cpu = p.cpu_percent;
+        const cls = Number.isFinite(cpu) && cpu >= 80 ? 'value-bad' : Number.isFinite(cpu) && cpu >= 50 ? 'value-warn' : '';
+        const rss = p.rss_kb == null ? '—' : (p.rss_kb >= 1024 * 1024
+          ? (p.rss_kb / 1024 / 1024).toFixed(1) + ' G'
+          : Math.round(p.rss_kb / 1024) + ' M');
+        return `<div class="proc-row">
+          <span class="proc-pid">${esc(String(p.pid))}</span>
+          <span class="proc-name" title="${esc(p.name)}">${esc(p.name)}</span>
+          <span class="${cls}">${cpu == null ? '—' : cpu.toFixed(1) + '%'}</span>
+          <span>${p.mem_percent == null ? '—' : p.mem_percent.toFixed(1) + '%'}</span>
+          <span class="proc-rss">${rss}</span>
+        </div>`;
+      }).join('')
+    : '<div class="dk-note muted">暂无进程数据</div>';
+  $('con-summary').textContent = con
+    ? `网络连接：已建立 ${con.established} · TIME_WAIT ${con.time_wait} · 监听 ${con.listen} · UDP ${con.udp}`
+    : '';
 }
 
 // ---------- Docker 负载（beta2.0） ----------
@@ -778,6 +820,10 @@ const HIS_METRICS = [
   ['net.tx_kbps', '上行 kbps'],
   ['disk.root_used_percent', '根分区已用 %'],
   ['docker.running', 'Docker 运行数'],
+  ['proc.count', '进程总数'],
+  ['proc.zombie', '僵尸进程'],
+  ['con.established', 'TCP 已建立'],
+  ['con.time_wait', 'TCP TIME_WAIT'],
 ];
 
 function hisOpen() { return !$('history-panel').classList.contains('hidden'); }
@@ -1186,7 +1232,7 @@ async function openConfig() {
   fillNotifyFields(c.notify || {});
   refreshServiceStatus();
   $('cfg-info').textContent =
-    `版本 ${c.version || 'beta1.4'} · 配置文件：${c.config_path || 'config.toml'}` +
+    `版本 ${c.version || 'beta1.4.3'} · 配置文件：${c.config_path || 'config.toml'}` +
     (c.mock ? ' · 当前是模拟数据模式' : '');
   $('config-mask').classList.remove('hidden');
   $('config-panel').classList.remove('hidden');

@@ -26,8 +26,18 @@
 #   DKS=none | down | ok,<运行数>,<容器总数>              （beta2.0 Docker 段）
 #   DKP=<id>,<名称>,<镜像>,<state>,<状态详情>;...          （docker ps -a，缓存刷新）
 #   DKST=<id>,<cpu%>,<已用内存>,<内存上限>,<内存%>,<网络IO>,<块IO>;...   （docker stats，仅运行中的）
+#   PSUM=<进程总数>,<运行中>,<僵尸>                        （beta1.4.3 进程汇总）
+#   PTOP=<pid>,<cpu%>,<rssKB>,<进程名>;...                 （beta1.4.3 进程 Top8，按 cpu% 降序、
+#          内存降序兜底；cpu% 为相邻两帧 /proc 差值（100%=单核满载），首帧留空；
+#          rssKB 按 4KB 页估算；纯读 /proc/<pid>/stat，不落盘不开端口）
+#   CON=<ESTAB>,<TIME_WAIT>,<LISTEN>,<UDP套接字>           （beta1.4.3 连接概览，/proc/net/* 行数统计）
 
 INTERVAL=${INTERVAL:-1}
+# 进程/连接段的 /proc 根（XMM_PROC_ROOT 仅供本地测试注入假 /proc，远端保持默认）。
+PROC_ROOT="${XMM_PROC_ROOT:-/proc}"
+# 上一帧进程 ticks 与 /proc/stat 总 jiffies（字符串常驻内存，不写文件）。
+PTOP_PREV=""
+PTOP_PREV_TOT=""
 
 # ---------- Docker（beta2.0：可选段，没装 docker 就完全不输出） ----------
 # docker stats --no-stream 本身要采样 1~2 秒，容器多时更久，不能每秒都跑；
@@ -387,6 +397,105 @@ gpu_info() {
   printf '%s' "$out"
 }
 
+# ---------- 进程 / 连接（beta1.4.3：只读 /proc，一次 awk 完成，不落盘） ----------
+# proc_emit 输出 "PSUM=...|PTOP=..." 两个段到 PROC_OUT（仿 docker_emit 的多段拼接）。
+# 注意：proc_emit 必须在当前 shell 直接调用（不能套 $()，否则 PTOP_PREV 状态丢失）。
+# CPU% 用相邻两帧 utime+stime 差值换算（100% = 单核满载），首帧没有上一帧就留空。
+PROC_OUT=""
+proc_emit() {
+  PROC_OUT=""
+  set -- "$PROC_ROOT"/[0-9]*/stat
+  [ -r "$1" ] || return 0
+  # statfile 走环境变量而不是 -v：awk 的 -v 会对值做转义处理，路径里的反斜杠会被吃掉。
+  raw=$(XMM_STATFILE="$PROC_ROOT/stat" awk -v prev="$PTOP_PREV" -v prevtot="$PTOP_PREV_TOT" '
+    BEGIN {
+      statfile = ENVIRON["XMM_STATFILE"]
+      n = split(prev, a, ";")
+      for (i = 1; i <= n; i++) {
+        p = index(a[i], ":")
+        if (p > 0) pv[substr(a[i], 1, p - 1)] = substr(a[i], p + 1) + 0
+      }
+      tot = 0
+      ncpu = 0
+      if ((getline line < statfile) > 0) {
+        m = split(line, x, " ")
+        for (i = 2; i <= m; i++) tot += x[i] + 0
+      }
+      while ((getline line < statfile) > 0) {
+        if (line ~ /^cpu[0-9]/) ncpu++
+      }
+      close(statfile)
+      if (ncpu < 1) ncpu = 1
+    }
+    {
+      pid = $1 + 0
+      c = $0
+      sub(/^[^(]*\(/, "", c)
+      sub(/\)[^)]*$/, "", c)
+      gsub(/[,;|]/, "_", c)
+      s = $0
+      sub(/^.*\) /, "", s)
+      ng = split(s, g, " ")
+      if (ng < 22) next
+      ticks = g[12] + g[13] + 0
+      rss = g[22] * 4
+      pcpu = ""
+      if (prevtot > 0 && tot > prevtot && (pid in pv) && ticks >= pv[pid]) {
+        pcpu = (ticks - pv[pid]) * 100.0 * ncpu / (tot - prevtot)
+        if (pcpu + 0 > 999.9) pcpu = 999.9
+        pcpu = sprintf("%.1f", pcpu)
+      }
+      printf "%s,%s,%.0f,%s\n", pid, pcpu, rss, c
+      if (cnt++) newprev = newprev ";"
+      newprev = newprev pid ":" ticks
+      total++
+      st = substr(g[1], 1, 1)
+      if (st == "R") running++
+      if (st == "Z") zombie++
+    }
+    END {
+      printf "M:P:%s\n", newprev
+      printf "M:T:%.0f\n", tot
+      printf "M:S:%d,%d,%d\n", total + 0, running + 0, zombie + 0
+    }
+  ' "$@")
+  [ -n "$raw" ] || return 0
+  PTOP_PREV=$(printf '%s\n' "$raw" | sed -n 's/^M:P://p')
+  PTOP_PREV_TOT=$(printf '%s\n' "$raw" | sed -n 's/^M:T://p')
+  psum=$(printf '%s\n' "$raw" | sed -n 's/^M:S://p')
+  ptop=$(printf '%s\n' "$raw" | sed '/^M:/d' | sort -t, -k2,2nr -k3,3nr | head -8)
+  ptop=$(printf '%s' "$ptop" | tr '\n' ';')
+  [ -n "$psum" ] && PROC_OUT="PSUM=$psum"
+  if [ -n "$ptop" ]; then
+    [ -n "$PROC_OUT" ] && PROC_OUT="$PROC_OUT|"
+    PROC_OUT="${PROC_OUT}PTOP=${ptop%;}"
+  fi
+}
+
+# 连接概览：/proc/net/{tcp,tcp6,udp,udp6} 状态行数（01=ESTAB 06=TIME_WAIT 0A=LISTEN）。
+conn_info() {
+  set --
+  for f in "$PROC_ROOT/net/tcp" "$PROC_ROOT/net/tcp6"; do
+    [ -r "$f" ] && set -- "$@" "$f"
+  done
+  for f in "$PROC_ROOT/net/udp" "$PROC_ROOT/net/udp6"; do
+    [ -r "$f" ] && set -- "$@" "$f"
+  done
+  [ $# -gt 0 ] || return 0
+  awk '
+    FNR == 1 { next }
+    FILENAME ~ /tcp6?$/ {
+      st = $4
+      if (st == "01") estab++
+      else if (st == "06") tw++
+      else if (st == "0A") listen++
+      next
+    }
+    FILENAME ~ /udp6?$/ { udp++ }
+    END { printf "%d,%d,%d,%d", estab + 0, tw + 0, listen + 0, udp + 0 }
+  ' "$@"
+}
+
 emit_once() {
   docker_tick
   out="T=$(date +%s)"
@@ -400,20 +509,25 @@ emit_once() {
   v=$(fan_info);     [ -n "$v" ] && out="$out|FAN=$v"
   v=$(gpu_info);     [ -n "$v" ] && out="$out|GPU=$v"
   v=$(os_info);      [ -n "$v" ] && out="$out|OS=$v"
+  proc_emit;         [ -n "$PROC_OUT" ] && out="$out|$PROC_OUT"
+  v=$(conn_info);    [ -n "$v" ] && out="$out|CON=$v"
   v=$(docker_emit);  [ -n "$v" ] && out="$out|$v"
   printf '%s\n' "$out"
 }
 
 trap 'exit 0' INT TERM HUP
 
-case "$1" in
-  --once)
-    emit_once
-    ;;
-  *)
-    while :; do
+# XMM_NO_DISPATCH=1 时只加载函数（本地测试用），不进入采集循环。
+if [ -z "${XMM_NO_DISPATCH:-}" ]; then
+  case "$1" in
+    --once)
       emit_once
-      sleep "$INTERVAL"
-    done
-    ;;
-esac
+      ;;
+    *)
+      while :; do
+        emit_once
+        sleep "$INTERVAL"
+      done
+      ;;
+  esac
+fi

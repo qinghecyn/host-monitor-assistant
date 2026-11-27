@@ -30,3 +30,7 @@ Thumbs.db
 ss.txt
 __pycache__/
 .pytest_cache/
+
+# ---- Tauri 生成物 ----
+shell/tauri/src-tauri/gen/
+dist-release/

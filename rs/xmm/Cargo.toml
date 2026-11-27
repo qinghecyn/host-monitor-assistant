@@ -1,6 +1,6 @@
 [package]
 name = "xmm"
-version = "1.4.0"
+version = "1.4.3"
 edition = "2021"
 description = "主机监控小助手 —— Rust 后端（替代 Python FastAPI 后端）"
 license = "MIT"

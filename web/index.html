@@ -15,7 +15,7 @@
   <form class="card login-card" id="login-form" autocomplete="off">
     <h1>主机监控小助手</h1>
     <button type="button" class="theme-switch login-theme" data-theme-toggle></button>
-    <p class="muted center">实时查看 Linux 主机运行状态 <span class="ver">beta1.4</span></p>
+    <p class="muted center">实时查看 Linux 主机运行状态 <span class="ver">beta1.4.3</span></p>
     <label>服务端地址
       <input id="server-url" placeholder="留空 = 当前站点" spellcheck="false">
     </label>
@@ -149,6 +149,15 @@
       <ul class="disklist" id="disk-list"></ul>
     </section>
 
+    <section class="card wide" id="card-proc">
+      <div class="card-head"><h2>进程与连接</h2><div class="sub" id="proc-summary"></div></div>
+      <div class="proc-head" id="proc-table-head">
+        <span>PID</span><span>进程</span><span>CPU</span><span>内存</span><span>RSS</span>
+      </div>
+      <div class="proclist" id="proc-list"></div>
+      <div class="sub proc-con" id="con-summary"></div>
+    </section>
+
     <section class="card wide" id="card-docker">
       <div class="card-head"><h2>Docker 负载</h2><div class="sub" id="docker-summary"></div></div>
       <div class="docker-head" id="docker-table-head">
@@ -243,7 +252,7 @@
       </select></label>
     </div>
     <div class="cfg-row2">
-      <label>地址 / IP（http 可填完整 URL）<input id="pb-host" placeholder="192.168.1.100" spellcheck="false"></label>
+      <label>地址 / IP（http 可填完整 URL）<input id="pb-host" placeholder="10.2.0.254" spellcheck="false"></label>
       <label>端口（ping 不需要）<input id="pb-port" type="number" min="1" max="65535" value="443"></label>
     </div>
     <div class="cfg-row2">
