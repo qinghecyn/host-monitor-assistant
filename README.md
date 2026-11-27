@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/backend-Rust%20%2B%20axum%20%2B%20tokio-orange" alt="Rust">
   <img src="https://img.shields.io/badge/installer-3.1%20MiB-brightgreen" alt="3.1 MiB">
   <img src="https://img.shields.io/badge/tests-51%20passed-brightgreen" alt="tests">
-  <img src="https://img.shields.io/badge/version-1.4.3-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-1.4.4-blue" alt="version">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Browser%20%7C%20Android-lightgrey" alt="platform">
 </p>
 

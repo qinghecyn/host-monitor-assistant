@@ -6064,7 +6064,7 @@ dependencies = [
 
 [[package]]
 name = "xiaozhushou-monitor"
-version = "1.4.3"
+version = "1.4.4"
 dependencies = [
  "axum",
  "serde",
@@ -6079,7 +6079,7 @@ dependencies = [
 
 [[package]]
 name = "xmm"
-version = "1.4.3"
+version = "1.4.4"
 dependencies = [
  "axum",
  "base64 0.22.1",

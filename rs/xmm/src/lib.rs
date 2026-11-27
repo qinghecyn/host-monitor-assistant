@@ -20,7 +20,7 @@ pub mod store;
 pub mod ws;
 
 /// 当前版本号（桌面 / 独立服务共用）；beta 标记随版本徽标同步
-pub const VERSION: &str = "beta1.4.3";
+pub const VERSION: &str = "beta1.4.4";
 
 /// Unix 时间戳（秒，带小数）
 pub fn now_ts() -> f64 {

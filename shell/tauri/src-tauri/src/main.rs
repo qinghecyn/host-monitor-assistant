@@ -308,7 +308,7 @@ fn main() {
                 token, port
             );
             let win = WebviewWindowBuilder::new(app, "main", url)
-                .title("主机监控小助手 beta1.4.3")
+                .title("主机监控小助手 beta1.4.4")
                 .inner_size(1280.0, 840.0)
                 .min_inner_size(380.0, 520.0)
                 .center()
@@ -321,7 +321,7 @@ fn main() {
             let quit_item = MenuItem::with_id(app, "quit", "退出（停止监控）", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
             let mut tray = TrayIconBuilder::with_id("main-tray")
-                .tooltip("主机监控小助手 beta1.4.3")
+                .tooltip("主机监控小助手 beta1.4.4")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {

@@ -47,10 +47,12 @@ const NET_BITS_PER_KBPS = 1000; // 后端 kbps = kbit/s（十进制）
 function netRateScale(v) {
   const kbps = Math.max(0, Number(v) || 0);
   if (state.netUnit === 'bytes') {
-    const perKib = NET_BITS_PER_KBPS / 8 / 1024; // 1 kbit/s = 1/8.192 KiB/s
-    if (kbps * perKib >= 1024 * 1024) return { div: perKib / 1024 / 1024, unit: 'GiB/s' };
-    if (kbps * perKib >= 1024) return { div: perKib / 1024, unit: 'MiB/s' };
-    return { div: perKib, unit: 'KiB/s' };
+    const perKib = NET_BITS_PER_KBPS / 8 / 1024; // 1 kbit/s = perKib KiB/s（乘系数）
+    // div 语义是"除数"（显示值 = kbps / div）：bytes 模式必须用乘系数的倒数，
+    // 早期把 perKib 直接当除数导致显示虚高 67 倍（1 kbit/s 被显示成 8.192 "KiB/s"）。
+    if (kbps * perKib >= 1024 * 1024) return { div: 1024 * 1024 / perKib, unit: 'GiB/s' };
+    if (kbps * perKib >= 1024) return { div: 1024 / perKib, unit: 'MiB/s' };
+    return { div: 1 / perKib, unit: 'KiB/s' };
   }
   if (kbps >= 1e6) return { div: 1e6, unit: 'Gbps' };
   if (kbps >= 1000) return { div: 1000, unit: 'Mbps' };
@@ -633,7 +635,7 @@ function renderAll() {
   // Docker 负载（beta2.0）
   renderDocker(latest && latest.docker, offline);
 
-  // 进程与连接（beta1.4.3）
+  // 进程与连接（beta1.4.4）
   renderProcs(latest, hasTargets);
 
   // 告警横幅
@@ -673,7 +675,7 @@ function pickMonitoredNet(nets) {
   return pickPrimaryNet(nets);
 }
 
-// ---------- 进程与连接（beta1.4.3） ----------
+// ---------- 进程与连接（beta1.4.4） ----------
 
 // 目标机没提供 PSUM/PTOP/CON 段（旧版采集脚本、极简环境）时整卡隐藏，
 // 不让"取不到"伪装成"没有"；有任一段就展开对应内容。
@@ -1232,7 +1234,7 @@ async function openConfig() {
   fillNotifyFields(c.notify || {});
   refreshServiceStatus();
   $('cfg-info').textContent =
-    `版本 ${c.version || 'beta1.4.3'} · 配置文件：${c.config_path || 'config.toml'}` +
+    `版本 ${c.version || 'beta1.4.4'} · 配置文件：${c.config_path || 'config.toml'}` +
     (c.mock ? ' · 当前是模拟数据模式' : '');
   $('config-mask').classList.remove('hidden');
   $('config-panel').classList.remove('hidden');

@@ -633,7 +633,7 @@ function renderAll() {
   // Docker 负载（beta2.0）
   renderDocker(latest && latest.docker, offline);
 
-  // 进程与连接（beta1.4.3）
+  // 进程与连接（beta1.4.4）
   renderProcs(latest, hasTargets);
 
   // 告警横幅
@@ -673,7 +673,7 @@ function pickMonitoredNet(nets) {
   return pickPrimaryNet(nets);
 }
 
-// ---------- 进程与连接（beta1.4.3） ----------
+// ---------- 进程与连接（beta1.4.4） ----------
 
 // 目标机没提供 PSUM/PTOP/CON 段（旧版采集脚本、极简环境）时整卡隐藏，
 // 不让"取不到"伪装成"没有"；有任一段就展开对应内容。
@@ -1232,7 +1232,7 @@ async function openConfig() {
   fillNotifyFields(c.notify || {});
   refreshServiceStatus();
   $('cfg-info').textContent =
-    `版本 ${c.version || 'beta1.4.3'} · 配置文件：${c.config_path || 'config.toml'}` +
+    `版本 ${c.version || 'beta1.4.4'} · 配置文件：${c.config_path || 'config.toml'}` +
     (c.mock ? ' · 当前是模拟数据模式' : '');
   $('config-mask').classList.remove('hidden');
   $('config-panel').classList.remove('hidden');
